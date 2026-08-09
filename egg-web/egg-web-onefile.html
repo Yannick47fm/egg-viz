@@ -231,24 +231,6 @@
 
     <footer>Библиотека egg (POPL 2021) · рендер графов — Graphviz (viz.js) · интерфейс — Rust + WebAssembly<div id="load-status" style="margin-top:6px;color:var(--warn);font-size:0.9rem"></div></footer>
 
-<script>
-        // Инициализация viz.js (Graphviz, собранный в WASM) — и мост для Rust.
-        window.__vizReady = Viz.instance();
-        window.renderDot = function (dot, containerId) {
-            window.__vizReady.then(function (viz) {
-                var box = document.getElementById(containerId);
-                if (!box) return;
-                box.innerHTML = "";
-                try {
-                    var svg = viz.renderSVGElement(dot);
-                    box.appendChild(svg);
-                } catch (e) {
-                    box.textContent = "Ошибка рендера: " + e;
-                }
-            });
-        };
-    </script>
-
 </body>
 </html>
 

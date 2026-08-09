@@ -19,8 +19,9 @@
    и видите, как `f(a,b)` и `f(a,c)` сливаются в один класс эквивалентности.
 4. Текстовое объяснение того, что происходит.
 
-Рендер графов — Graphviz, собранный в WASM ([viz.js](https://github.com/rhysd/viz-js),
-загружается с CDN; для работы нужен интернет).
+Рендер графов — Graphviz, собранный в WASM ([viz.js](https://github.com/rhysd/viz-js)).
+`viz-standalone.js` лежит рядом с сайтом (`static/viz-standalone.js`) и копируется в
+сборку — внешних зависимостей у сайта нет, интернет не нужен.
 
 ## Стек
 
@@ -53,6 +54,7 @@ cargo test
 ## Структура
 
 - `index.html` — разметка, стили, инициализация viz.js и мост `window.renderDot`
+- `static/viz-standalone.js` — Graphviz WASM (viz.js), встраивается в сборку
 - `src/lib.rs` — UI на web-sys: обработчики, снапшоты графа, ползунок
 - `src/engine.rs` — чистый Rust без web-sys: токенизатор и разбор инфикс/s-записи,
   сборка `Rewrite` из строк, наивный терм-райтер (всё покрыто тестами)

@@ -26,7 +26,10 @@ $html = Get-Content -LiteralPath (Join-Path $web "index.html") -Raw -Encoding UT
 $genJs = Get-Content -LiteralPath $jsFile.FullName -Raw -Encoding UTF8
 $wasmB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($wasmFile.FullName))
 
-$vizCache = Join-Path $PSScriptRoot "viz-standalone.js"
+$vizCache = Join-Path $web "static\viz-standalone.js"
+if (-not (Test-Path -LiteralPath $vizCache)) {
+    $vizCache = Join-Path $PSScriptRoot "viz-standalone.js"
+}
 if (-not (Test-Path -LiteralPath $vizCache)) {
     $url = "https://cdn.jsdelivr.net/npm/@viz-js/viz@3/lib/viz-standalone.js"
     try {
@@ -40,11 +43,14 @@ if (-not (Test-Path -LiteralPath $vizCache)) {
 }
 $vizJs = Get-Content -LiteralPath $vizCache -Raw -Encoding UTF8
 
-# 1. Убираем внешний скрипт Graphviz с CDN.
-$html = $html -replace '(?ms)^\s*<script src="https://cdn\.jsdelivr\.net[^"]*viz-standalone\.js">\s*</script>\s*', "`n"
-# 2. Убираем метку trunk (WASM и JS встроим сами).
+# 1. Убираем внешний скрипт Graphviz (с CDN или локальный относительный).
+$html = $html -replace '(?ms)^\s*<script src="[^"]*viz-standalone\.js">\s*</script>\s*', "`n"
+# 2. Убираем встроенный мост renderDot из index.html (loader ниже определяет его заново,
+#    уже после встраивания viz.js, — иначе был бы ReferenceError: Viz is not defined).
+$html = $html -replace '(?ms)^\s*<script>\s*//[^\r\n]*\r?\n\s*window\.__vizReady = Viz\.instance\(\).*?</script>\s*', "`n"
+# 3. Убираем метку trunk (WASM и JS встроим сами).
 $html = $html -replace '(?ms)^\s*<link data-trunk rel="rust" />\s*', "`n"
-# 3. Инъекция индикатора загрузки в подвал.
+# 4. Инъекция индикатора загрузки в подвал.
 $html = $html -replace '</footer>', '<div id="load-status" style="margin-top:6px;color:var(--warn);font-size:0.9rem"></div></footer>'
 
 $loader = @"

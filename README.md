@@ -91,7 +91,8 @@ cargo test                # 25 тестов: каждое правило, пар
 
 Стек: Rust + egg (фича `wasm-bindgen`) → [trunk](https://trunkrs.dev/) →
 [web-sys](https://crates.io/crates/web-sys). Рендер графов — Graphviz в WASM
-([viz.js](https://github.com/rhysd/viz-js)). Разбор выражений и наивный райтер —
+([viz.js](https://github.com/rhysd/viz-js)), `viz-standalone.js` встраивается
+в сборку — внешних зависимостей нет. Разбор выражений и наивный райтер —
 чистый Rust в `egg-web/src/engine.rs` (покрыт тестами, не зависит от wasm).
 
 Онлайн-версия: **https://yannick47fm.github.io/egg-viz/** (GitHub Pages,
@@ -133,6 +134,7 @@ powershell -File ../scripts/build-onefile.ps1
 │   ├── src/lib.rs            # UI на web-sys (обработчики, снапшоты, ползунок)
 │   ├── src/engine.rs         # чистый Rust: парсер, свои правила, наивный райтер
 │   ├── index.html            # разметка, стили, мост renderDot
+│   ├── static/               # viz-standalone.js — Graphviz WASM, встраивается в сборку
 │   ├── tests/verify.rs       # 25 тестов: правила, парсер, райтер
 │   ├── egg-web-onefile.html  # сайт одним файлом
 │   └── README.md
