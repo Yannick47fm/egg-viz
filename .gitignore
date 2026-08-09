@@ -1,0 +1,13 @@
+# Rust / Cargo
+**/target/
+
+# Сборка сайта (trunk)
+egg-web/dist/
+
+# Сгенерированные визуализации (egg-demo)
+egg-demo/viz/
+
+# Системное
+Thumbs.db
+Desktop.ini
+.DS_Store

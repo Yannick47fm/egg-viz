@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>egg — e-graphs / equality saturation</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #171b26;
+            --border: #262d3d;
+            --text: #e6e9f0;
+            --muted: #8b93a7;
+            --accent: #6c8cff;
+            --accent2: #42d392;
+            --warn: #ffb86b;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", system-ui, sans-serif;
+            line-height: 1.55;
+        }
+        header {
+            padding: 40px 20px 20px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+        header h1 { margin: 0; font-size: 2rem; }
+        header p { color: var(--muted); margin: 8px 0 0; }
+        main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+        section {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-top: 24px;
+        }
+        h2 { margin: 0 0 4px; font-size: 1.25rem; }
+        .sub { color: var(--muted); margin: 0 0 16px; font-size: 0.95rem; }
+        .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+        @media (max-width: 850px) { .grid { grid-template-columns: 1fr; } }
+        label { display: block; margin-top: 10px; font-size: 0.9rem; color: var(--muted); }
+        textarea, input[type="text"] {
+            width: 100%;
+            margin-top: 4px;
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            font-family: Consolas, monospace;
+            font-size: 0.95rem;
+        }
+        button {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 0.95rem;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+        button:hover { filter: brightness(1.1); }
+        button.toggle { background: var(--border); color: var(--text); }
+        button.toggle.on { background: var(--accent2); color: #0b1a12; }
+        .rules { margin-top: 10px; display: grid; gap: 4px; }
+        .rules label { margin: 0; display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 0.9rem; }
+        .rules code { color: var(--warn); font-size: 0.85em; }
+        .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+        input[type="range"] { flex: 1; accent-color: var(--accent); }
+        #svg-box {
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: auto;
+            min-height: 320px;
+            max-height: 560px;
+        }
+        #svg-box svg { display: block; min-width: 100%; }
+        .status { color: var(--warn); font-size: 0.9rem; margin-top: 8px; min-height: 1.2em; }
+        .stats {
+            margin-top: 12px;
+            padding: 12px 14px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        .stats .big { font-size: 1.05rem; }
+        code {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.9em;
+        }
+        .explain { color: var(--muted); font-size: 0.95rem; }
+        .explain b { color: var(--text); }
+        footer { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 20px; }
+        .rule-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>egg: e-graphs и equality saturation</h1>
+        <p>Интерактивная визуализация: сама библиотека <b>egg</b> работает в браузере через WebAssembly</p>
+    </header>
+
+    <main>
+        <section>
+            <h2>1. Equality saturation в действии</h2>
+            <p class="sub">
+                Введите выражение (префиксная запись), выберите правила переписывания и нажмите «Запустить».
+                Затем двигайте ползунок — e-graph будет расти от итерации к итерации, не теряя ни одного эквивалентного выражения.
+            </p>
+            <div class="grid">
+                <div>
+                    <label>Выражение
+                        <textarea id="expr-input" rows="2">(* (+ 0 (* 1 a)) (+ b b))</textarea>
+                    </label>
+
+                    <div class="rules" id="rules">
+                        <label><input type="checkbox" id="rule-commute-add" checked /> коммутативность +: <code>(+ ?x ?y) =&gt; (+ ?y ?x)</code></label>
+                        <label><input type="checkbox" id="rule-commute-mul" checked /> коммутативность *: <code>(* ?x ?y) =&gt; (* ?y ?x)</code></label>
+                        <label><input type="checkbox" id="rule-add-0" checked /> сложение с нулём: <code>(+ ?x 0) =&gt; ?x</code></label>
+                        <label><input type="checkbox" id="rule-mul-0" checked /> умножение на ноль: <code>(* ?x 0) =&gt; 0</code></label>
+                        <label><input type="checkbox" id="rule-mul-1" checked /> умножение на единицу: <code>(* ?x 1) =&gt; ?x</code></label>
+                        <label><input type="checkbox" id="rule-add-same" checked /> сложение одинакового: <code>(+ ?x ?x) =&gt; (* 2 ?x)</code></label>
+                        <label><input type="checkbox" id="rule-mul-assoc" checked /> ассоциативность *: <code>(* (* ?x ?y) ?z) =&gt; (* ?x (* ?y ?z))</code></label>
+                    </div>
+
+                    <button id="run-btn">Запустить</button>
+
+                    <div class="slider-row">
+                        <label style="margin:0">Итерация</label>
+                        <input type="range" id="iter-slider" min="0" max="7" value="7" />
+                        <span id="iter-label" style="white-space:nowrap">7 из 7</span>
+                    </div>
+                </div>
+
+                <div>
+                    <div id="svg-box"></div>
+                    <div class="status" id="status"></div>
+                    <div class="stats">
+                        <div id="stats" class="big">—</div>
+                        <div style="margin-top:6px">
+                            Извлечённое выражение (минимальная стоимость <code>AstSize</code>):
+                            <b id="extract-result">—</b>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>2. Конгруэнтное замыкание</h2>
+            <p class="sub">
+                Ключевой приём e-graph'ов: если <code>a = b</code> и <code>b = c</code>, то <code>f(a,b)</code> и
+                <code>f(a,c)</code> автоматически попадают в один класс эквивалентности — равенство «просачивается»
+                внутрь любого контекста.
+            </p>
+            <div class="grid">
+                <div>
+                    <p style="margin:0 0 4px">Объявите равенства:</p>
+                    <div style="display:flex; gap:12px">
+                        <button class="toggle" id="btn-ab" data-active="0">a = b</button>
+                        <button class="toggle" id="btn-bc" data-active="0">b = c</button>
+                    </div>
+                    <div class="status" id="part1-status"></div>
+                </div>
+                <div id="svg-box2" style="min-height:220px"></div>
+            </div>
+        </section>
+
+        <section class="explain">
+            <h2>3. Что здесь происходит</h2>
+            <p>
+                <b>E-graph</b> — граф, где одинаковые подвыражения представлены одним узлом
+                (класс эквивалентности, e-class). Правила переписывания в egg работают не как в обычном
+                терм-райтере (применить = заменить и выбросить старое), а <b>добавляют равенства</b> в граф —
+                поэтому ни одна эквивалентная форма выражения не теряется. Процесс называется
+                <b>equality saturation</b>: правила применяются, пока есть новые равенства.
+            </p>
+            <p>
+                Обратите внимание на ползунок: при переходе с итерации на итерацию граф <b>растёт</b>
+                (появляются новые узлы), но старые не исчезают. В конце egg извлекает из графа выражение
+                с минимальной стоимостью — в демо это размер дерева (<code>AstSize</code>).
+            </p>
+        </section>
+    </main>
+
+    <footer>Библиотека egg (POPL 2021) · рендер графов — Graphviz (viz.js) · интерфейс — Rust + WebAssembly</footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3/lib/viz-standalone.js"></script>
+    <script>
+        // Инициализация viz.js (Graphviz, собранный в WASM) — и мост для Rust.
+        window.__vizReady = Viz.instance();
+        window.renderDot = function (dot, containerId) {
+            window.__vizReady.then(function (viz) {
+                var box = document.getElementById(containerId);
+                if (!box) return;
+                box.innerHTML = "";
+                try {
+                    var svg = viz.renderSVGElement(dot);
+                    box.appendChild(svg);
+                } catch (e) {
+                    box.textContent = "Ошибка рендера: " + e;
+                }
+            });
+        };
+    </script>
+
+    <link data-trunk rel="rust" />
+</body>
+</html>

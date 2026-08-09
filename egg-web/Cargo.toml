@@ -1,0 +1,14 @@
+[package]
+name = "egg-web"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+egg = { version = "0.11.0", features = ["wasm-bindgen"] }
+wasm-bindgen = "0.2.127"
+web-sys = { version = "0.3.104", features = ["Document", "Window", "Element", "HtmlInputElement", "HtmlTextAreaElement", "HtmlButtonElement", "HtmlDivElement", "HtmlSelectElement", "HtmlSpanElement", "HtmlParagraphElement", "Node", "Event", "InputEvent", "MouseEvent", "console", "DomStringMap"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
