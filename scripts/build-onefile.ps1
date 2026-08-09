@@ -1,4 +1,4 @@
-# Собирает однофайловую версию сайта (egg-web-onefile.html):
+﻿# Собирает однофайловую версию сайта (egg-web-onefile.html):
 # WASM-модуль egg (base64), сгенерированный JS и Graphviz (viz-standalone.js)
 # встраиваются в один HTML — сайт работает офлайн без внешних зависимостей.
 #
@@ -89,4 +89,5 @@ $wasmB64
 
 $out = Join-Path $web "egg-web-onefile.html"
 [IO.File]::WriteAllText($out, $html + $loader, [Text.Encoding]::UTF8)
-Write-Host "Готово: $out ($((Get-Item -LiteralPath $out).Length / 1MB) МБ)"
+$sizeMb = [Math]::Round((Get-Item -LiteralPath $out).Length / 1MB, 2)
+Write-Host "Готово: $out (${sizeMb} МБ)"

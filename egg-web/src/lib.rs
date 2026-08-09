@@ -5,9 +5,13 @@
 // прямо на странице. UI — на web-sys (DOM), рендер графов — Graphviz WASM
 // (viz.js), которому мы отдаём DOT-вывод egg'а через глобальную функцию
 // renderDot (объявлена в index.html).
+//
+// Вся разборка/логика — в модуле engine (чистый Rust, покрыт тестами).
 // ============================================================================
 
-use egg::{rewrite as rw, *};
+pub mod engine;
+
+use egg::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{window, HtmlElement, HtmlInputElement, HtmlTextAreaElement};
@@ -46,31 +50,62 @@ fn add_click(id: &str, mut f: impl FnMut() + 'static) {
 
 // --- правила и выражение ------------------------------------------------------
 
-fn selected_rules() -> Vec<Rewrite<SymbolLang, ()>> {
-    let all: [(&str, Rewrite<SymbolLang, ()>); 7] = [
-        ("rule-commute-add", rw!("commute-add"; "(+ ?x ?y)" => "(+ ?y ?x)")),
-        ("rule-commute-mul", rw!("commute-mul"; "(* ?x ?y)" => "(* ?y ?x)")),
-        ("rule-add-0", rw!("add-0"; "(+ ?x 0)" => "?x")),
-        ("rule-mul-0", rw!("mul-0"; "(* ?x 0)" => "0")),
-        ("rule-mul-1", rw!("mul-1"; "(* ?x 1)" => "?x")),
-        ("rule-add-same", rw!("add-same"; "(+ ?x ?x)" => "(* 2 ?x)")),
-        ("rule-mul-assoc", rw!("mul-assoc"; "(* (* ?x ?y) ?z)" => "(* ?x (* ?y ?z))")),
-    ];
-    all.iter()
-        .filter(|(id, _)| el::<HtmlInputElement>(id).checked())
-        .map(|(_, rule)| rule.clone())
-        .collect()
+/// Встроенные правила: (id чекбокса, имя, левая часть, правая часть).
+/// Строки одинаково используются и для egg, и для наивного райтера.
+const BUILTIN_RULES: [(&str, &str, &str, &str); 7] = [
+    ("rule-commute-add", "commute-add", "(+ ?x ?y)", "(+ ?y ?x)"),
+    ("rule-commute-mul", "commute-mul", "(* ?x ?y)", "(* ?y ?x)"),
+    ("rule-add-0", "add-0", "(+ ?x 0)", "?x"),
+    ("rule-mul-0", "mul-0", "(* ?x 0)", "0"),
+    ("rule-mul-1", "mul-1", "(* ?x 1)", "?x"),
+    ("rule-add-same", "add-same", "(+ ?x ?x)", "(* 2 ?x)"),
+    ("rule-mul-assoc", "mul-assoc", "(* (* ?x ?y) ?z)", "(* ?x (* ?y ?z))"),
+];
+
+/// Выбранные галочками + пользовательские правила из textarea.
+/// Ошибка в любом правиле останавливает запуск с понятным сообщением.
+fn selected_rules() -> Result<Vec<Rewrite<SymbolLang, ()>>, String> {
+    let mut rules = Vec::new();
+    for (id, name, lhs, rhs) in BUILTIN_RULES {
+        if el::<HtmlInputElement>(id).checked() {
+            rules.push(engine::make_rule(name, lhs, rhs)?);
+        }
+    }
+    let custom = el::<HtmlTextAreaElement>("rules-custom").value();
+    let mut idx = 0usize;
+    for line in custom.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        idx += 1;
+        let (name, lhs, rhs) = engine::parse_rule_str(line, idx)?;
+        rules.push(engine::make_rule(&name, &lhs, &rhs)?);
+    }
+    Ok(rules)
+}
+
+/// Тексты правил для наивного райтера (встроенные выбранные + пользовательские).
+fn rules_text() -> String {
+    let mut s = String::new();
+    for (id, name, lhs, rhs) in BUILTIN_RULES {
+        if el::<HtmlInputElement>(id).checked() {
+            s.push_str(&format!("{name}: {lhs} => {rhs}\n"));
+        }
+    }
+    s.push_str(&el::<HtmlTextAreaElement>("rules-custom").value());
+    s
 }
 
 fn parse_expr() -> Option<RecExpr<SymbolLang>> {
     let text = el::<HtmlTextAreaElement>("expr-input").value();
-    match text.parse() {
+    match engine::parse_any(&text).map(|t| engine::tree_to_recexpr(&t)) {
         Ok(expr) => {
             set_text("status", "");
             Some(expr)
         }
-        Err(_) => {
-            set_text("status", &format!("Не удалось разобрать выражение: {text}"));
+        Err(e) => {
+            set_text("status", &e);
             None
         }
     }
@@ -110,7 +145,30 @@ fn run_full(expr: &RecExpr<SymbolLang>, rules: &[Rewrite<SymbolLang, ()>]) {
     show_iteration(expr, rules, max_iter);
 }
 
-// --- раздел 2: конгруэнтное замыкание --------------------------------------------
+// --- раздел 2: почему не наивный райтер -------------------------------------------
+
+fn run_naive() {
+    let expr_text = el::<HtmlTextAreaElement>("expr-input").value();
+    let out = engine::naive_rewrite(&expr_text, &rules_text());
+    if !out.ok {
+        set_text("naive-status", &out.error);
+        return;
+    }
+    set_text(
+        "naive-status",
+        &if out.converged {
+            format!("Сошёлся: {steps} шагов", steps = out.steps)
+        } else {
+            format!(
+                "НЕ сошёлся за {steps} шагов (ограничение) — зациклился",
+                steps = out.steps
+            )
+        },
+    );
+    set_text("naive-result", &out.best);
+}
+
+// --- раздел 3: конгруэнтное замыкание --------------------------------------------
 
 fn toggle(id: &str) {
     let btn = el::<HtmlElement>(id);
@@ -157,21 +215,27 @@ pub fn main() {
 
     add_click("run-btn", || {
         if let Some(expr) = parse_expr() {
-            let rules = selected_rules();
-            run_full(&expr, &rules);
+            match selected_rules() {
+                Ok(rules) => run_full(&expr, &rules),
+                Err(e) => set_text("status", &format!("Правила: {e}")),
+            }
         }
     });
 
     {
         let cb = Closure::wrap(Box::new(|| {
             if let Some(expr) = parse_expr() {
-                let rules = selected_rules();
-                let iter: usize = el::<HtmlInputElement>("iter-slider")
-                    .value()
-                    .parse()
-                    .unwrap_or(0);
-                set_text("iter-label", &iter.to_string());
-                show_iteration(&expr, &rules, iter);
+                match selected_rules() {
+                    Ok(rules) => {
+                        let iter: usize = el::<HtmlInputElement>("iter-slider")
+                            .value()
+                            .parse()
+                            .unwrap_or(0);
+                        set_text("iter-label", &iter.to_string());
+                        show_iteration(&expr, &rules, iter);
+                    }
+                    Err(e) => set_text("status", &format!("Правила: {e}")),
+                }
             }
         }) as Box<dyn FnMut()>);
         el::<HtmlInputElement>("iter-slider")
@@ -179,6 +243,8 @@ pub fn main() {
             .expect("не удалось повесить обработчик ползунка");
         cb.forget();
     }
+
+    add_click("naive-btn", run_naive);
 
     add_click("btn-ab", || {
         toggle("btn-ab");
@@ -191,8 +257,11 @@ pub fn main() {
 
     // Стартовое состояние: сразу запускаем демо, чтобы страница не была пустой.
     if let Some(expr) = parse_expr() {
-        let rules = selected_rules();
-        run_full(&expr, &rules);
+        match selected_rules() {
+            Ok(rules) => run_full(&expr, &rules),
+            Err(e) => set_text("status", &format!("Правила: {e}")),
+        }
     }
+    run_naive();
     show_part1();
 }

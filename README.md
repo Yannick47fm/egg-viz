@@ -1,5 +1,13 @@
 # egg-viz: e-graphs и equality saturation — демо и интерактивный сайт
 
+> **TL;DR (EN):** An interactive, Russian-language introduction to
+> [e-graphs](https://egraphs-good.github.io/) and equality saturation built on the
+> [egg](https://github.com/egraphs-good/egg) library. Two parts: a CLI demo that
+> renders the e-graph with Graphviz, and a website where **real egg runs in the
+> browser via WebAssembly** — type an expression (infix or s-expression), toggle
+> rewrite rules or add your own, scrub through saturation iterations, and compare
+> with a naive term rewriter to see why e-graphs never lose equivalent forms.
+
 Проект для знакомства с библиотекой [egg](https://github.com/egraphs-good/egg) —
 реализацией **e-graph'ов** (эквивалентностных графов) и алгоритма
 **equality saturation** на Rust.
@@ -61,25 +69,32 @@ trunk build --release     # статика в egg-web/dist/
 
 ```sh
 cd egg-web
-cargo test                # 11 тестов: каждое правило, извлечение, конгруэнтное замыкание
+cargo test                # 25 тестов: каждое правило, парсер, наивный райтер, конгруэнтное замыкание
 ```
 
 ## Сайт
 
-Интерактивная страница с тремя разделами:
+Интерактивная страница с четырьмя разделами:
 
-1. **Equality saturation** — ввод выражения, выбор правил галочками, ползунок по
-   итерациям: видно, как e-graph растёт, ничего не теряя, и как `Extractor`
-   достаёт минимальное выражение (`AstSize`).
-2. **Конгруэнтное замыкание** — кнопки «a = b», «b = c»: вживую видно слияние
+1. **Equality saturation** — ввод выражения (инфиксная запись `a * 2 + b` или
+   s-запись `(* a 2) (+ ...)`), выбор правил галочками, свои правила в редакторе
+   (`имя: lhs => rhs`, переменные `?x`), ползунок по итерациям: видно, как e-graph
+   растёт, ничего не теряя, и как `Extractor` достаёт минимальное выражение
+   (`AstSize`).
+2. **Почему не просто терм-райтер?** — те же правила прогоняются через наивный
+   жадный райтер: он застревает в локальном оптимуме или зацикливается, тогда как
+   e-graph насыщается за конечное число итераций. Добавьте обратное правило
+   `?x => (+ ?x 0)` — и сравните.
+3. **Конгруэнтное замыкание** — кнопки «a = b», «b = c»: вживую видно слияние
    классов `f(a,b)` и `f(a,c)`.
-3. Текстовое объяснение.
+4. Текстовое объяснение.
 
 Стек: Rust + egg (фича `wasm-bindgen`) → [trunk](https://trunkrs.dev/) →
 [web-sys](https://crates.io/crates/web-sys). Рендер графов — Graphviz в WASM
-([viz.js](https://github.com/rhysd/viz-js)).
+([viz.js](https://github.com/rhysd/viz-js)). Разбор выражений и наивный райтер —
+чистый Rust в `egg-web/src/engine.rs` (покрыт тестами, не зависит от wasm).
 
-Онлайн-версия: **https://ybytor-byte.github.io/egg-viz/** (GitHub Pages,
+Онлайн-версия: **https://yannick47fm.github.io/egg-viz/** (GitHub Pages,
 собирается через [GitHub Actions](.github/workflows/pages.yml)).
 
 ### Однофайловая версия
@@ -106,6 +121,8 @@ powershell -File ../scripts/build-onefile.ps1
 | add-same | `(+ ?x ?x) => (* 2 ?x)` |
 | mul-assoc | `(* (* ?x ?y) ?z) => (* ?x (* ?y ?z))` |
 
+Любое правило можно выключить галочкой или добавить свои в редакторе на сайте.
+
 ## Структура репозитория
 
 ```
@@ -113,9 +130,10 @@ powershell -File ../scripts/build-onefile.ps1
 │   ├── src/main.rs
 │   └── README.md
 ├── egg-web/                  # сайт на WASM
-│   ├── src/lib.rs            # вся логика на Rust (egg + web-sys)
+│   ├── src/lib.rs            # UI на web-sys (обработчики, снапшоты, ползунок)
+│   ├── src/engine.rs         # чистый Rust: парсер, свои правила, наивный райтер
 │   ├── index.html            # разметка, стили, мост renderDot
-│   ├── tests/verify.rs       # проверка формул через настоящий egg
+│   ├── tests/verify.rs       # 25 тестов: правила, парсер, райтер
 │   ├── egg-web-onefile.html  # сайт одним файлом
 │   └── README.md
 ├── scripts/build-onefile.ps1 # генерация однофайловой версии

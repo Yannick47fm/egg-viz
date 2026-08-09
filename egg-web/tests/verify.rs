@@ -4,6 +4,7 @@
 // ============================================================================
 
 use egg::{rewrite as rw, *};
+use egg_web::engine::{make_rule, naive_rewrite, parse_expr_str, parse_rule_str};
 
 fn all_rules() -> Vec<Rewrite<SymbolLang, ()>> {
     vec![
@@ -155,4 +156,161 @@ fn congruence_closure() {
     eg.rebuild();
     assert_eq!(eg.find(fab), eg.find(fac), "после a=b, b=c классы должны слиться");
     assert_eq!(eg.number_of_classes(), 2, "должно остаться 2 класса");
+}
+
+// --- движок: разбор выражений ----------------------------------------------------
+
+/// Инфикс: приоритеты и ассоциативность.
+#[test]
+fn infix_precedence() {
+    assert_eq!(parse_expr_str("a * 2 + b").unwrap(), "(+ (* a 2) b)");
+    assert_eq!(parse_expr_str("a + b * 2").unwrap(), "(+ a (* b 2))");
+    assert_eq!(parse_expr_str("a + b - c").unwrap(), "(- (+ a b) c)");
+    assert_eq!(parse_expr_str("a - b - c").unwrap(), "(- (- a b) c)");
+    assert_eq!(parse_expr_str("a * b / c").unwrap(), "(/ (* a b) c)");
+}
+
+/// Инфикс: скобки меняют структуру.
+#[test]
+fn infix_parentheses() {
+    assert_eq!(parse_expr_str("(a + b) * 2").unwrap(), "(* (+ a b) 2)");
+    assert_eq!(parse_expr_str("(a + b) * (c + d)").unwrap(), "(* (+ a b) (+ c d))");
+}
+
+/// s-запись egg по-прежнему работает и даёт тот же результат, что инфикс.
+#[test]
+fn sexpr_still_works() {
+    assert_eq!(parse_expr_str("(* (+ 0 (* 1 a)) (+ b b))").unwrap(), "(* (+ 0 (* 1 a)) (+ b b))");
+    assert_eq!(parse_expr_str("(* a 2)").unwrap(), parse_expr_str("a * 2").unwrap());
+    assert_eq!(parse_expr_str("(+ a b)").unwrap(), parse_expr_str("a + b").unwrap());
+}
+
+/// Разбор ошибок: не должно паниковать.
+#[test]
+fn infix_bad_input() {
+    for bad in ["", "  ", "a +", "(a + b", "a b", "+ a"] {
+        assert!(parse_expr_str(bad).is_err(), "должно падать: «{bad}»");
+    }
+}
+
+/// Инфиксное выражение в e-graph даёт те же классы, что s-запись.
+#[test]
+fn infix_matches_sexpr_semantics() {
+    let ta = egg_web::engine::parse_any("a * 2 + b").unwrap();
+    let tb = egg_web::engine::parse_any("(+ (* a 2) b)").unwrap();
+    let mut eg: EGraph<SymbolLang, ()> = Default::default();
+    let ra = eg.add_expr(&egg_web::engine::tree_to_recexpr(&ta));
+    let rb = eg.add_expr(&egg_web::engine::tree_to_recexpr(&tb));
+    eg.rebuild();
+    assert_eq!(eg.find(ra), eg.find(rb), "инфикс и s-запись должны давать одну структуру");
+}
+
+// --- движок: пользовательские правила ---------------------------------------------
+
+/// Своё правило в инфиксной записи работает в настоящем egg.
+#[test]
+fn custom_rule_infix() {
+    let (name, lhs, rhs) = parse_rule_str("idemp: ?x + 0 => ?x", 1).unwrap();
+    assert_eq!(name, "idemp");
+    assert_eq!(lhs, "(+ ?x 0)");
+    assert_eq!(rhs, "?x");
+
+    let rule = make_rule(&name, &lhs, &rhs).unwrap();
+    let eg = Runner::default()
+        .with_expr(&"(* (+ a 0) (+ b 0))".parse::<RecExpr<SymbolLang>>().unwrap())
+        .run(&[rule]);
+    assert!(same_class(&eg.egraph, "(+ a 0)", "a"));
+}
+
+/// Своё правило в s-записи работает в настоящем egg.
+#[test]
+fn custom_rule_sexpr() {
+    let rule = make_rule("double", "(* ?x 2)", "(+ ?x ?x)").unwrap();
+    let eg = Runner::default()
+        .with_expr(&"(* a 2)".parse::<RecExpr<SymbolLang>>().unwrap())
+        .run(&[rule]);
+    assert!(same_class(&eg.egraph, "(* a 2)", "(+ a a)"));
+}
+
+/// Свободные переменные в правой части должны отклоняться (не паниковать).
+#[test]
+fn custom_rule_unbound_var_rejected() {
+    let err = make_rule("bad", "(+ ?x 0)", "?y").unwrap_err();
+    assert!(err.contains("?y"), "ожидалась ошибка про ?y, получили: {err}");
+}
+
+/// Ошибки парсинга правила дают понятное сообщение.
+#[test]
+fn custom_rule_bad_line() {
+    assert!(parse_rule_str("нет стрелки", 1).is_err());
+    assert!(parse_rule_str("x =>", 1).is_err());
+    assert!(parse_rule_str("=> x", 1).is_err());
+}
+
+// --- движок: наивный терм-райтер ---------------------------------------------------
+
+/// Без коммутативности наивный райтер сходится, но застревает в локальном
+/// оптимуме: (+ 0 X) и (* 1 X) не упрощаются, потому что 0 и 1 стоят слева,
+/// а правила (+ ?x 0) / (* ?x 1) видят только правую позицию.
+/// Тот же e-graph c теми же 3 правилами не лучше — см. следующий тест.
+#[test]
+fn naive_converges_without_commute() {
+    let out = naive_rewrite(
+        "(* (+ 0 (* 1 a)) (+ b b))",
+        "add-0: (+ ?x 0) => ?x\nmul-1: (* ?x 1) => ?x\nadd-same: (+ ?x ?x) => (* 2 ?x)",
+    );
+    assert!(out.ok, "{}", out.error);
+    assert!(out.converged, "должен сойтись за {} шагов", out.steps);
+    assert_eq!(out.best, "(* (+ 0 (* 1 a)) (* 2 b))", "застрял, не увидев 0/1 слева");
+}
+
+/// С тем же набором правил e-graph тоже «не видит» 0/1 слева: стоимость 8.
+/// «Суперсила» e-graph'а — в правиле, которое райтер применить не может
+/// (например, с коммутативностью райтер зацикливается, а e-graph насыщается).
+#[test]
+fn egraph_same_local_optimum() {
+    let rules: Vec<Rewrite<SymbolLang, ()>> = vec![
+        rw!("add-0"; "(+ ?x 0)" => "?x"),
+        rw!("mul-1"; "(* ?x 1)" => "?x"),
+        rw!("add-same"; "(+ ?x ?x)" => "(* 2 ?x)"),
+    ];
+    let start: RecExpr<SymbolLang> = "(* (+ 0 (* 1 a)) (+ b b))".parse().unwrap();
+    let runner = Runner::default().with_expr(&start).run(&rules);
+    let extractor = Extractor::new(&runner.egraph, AstSize);
+    let (cost, best) = extractor.find_best(runner.roots[0]);
+    assert_eq!(cost, 9, "локальный оптимум: 0/1 слева не упрощаются");
+    let valid = [
+        "(* (+ 0 (* 1 a)) (+ b b))",
+        "(* (+ 0 (* 1 a)) (* 2 b))",
+    ];
+    assert!(valid.contains(&best.to_string().as_str()), "неожиданный результат: {best}");
+}
+
+/// С коммутативностью наивный райтер зацикливается — а e-graph насыщается за 7 итераций.
+#[test]
+fn naive_loops_with_commute() {
+    let out = naive_rewrite(
+        "(+ a b)",
+        "commute-add: (+ ?x ?y) => (+ ?y ?x)",
+    );
+    assert!(out.ok, "{}", out.error);
+    assert!(!out.converged, "должен зациклиться (ограничение шагов)");
+    assert_eq!(out.steps, 2000, "должен упереться в ограничение");
+}
+
+/// Обратное правило раздувает терм — райтер тоже зацикливается.
+#[test]
+fn naive_loops_with_reverse_rule() {
+    let out = naive_rewrite("a", "grow: ?x => (+ ?x 0)");
+    assert!(out.ok, "{}", out.error);
+    assert!(!out.converged);
+}
+
+/// Тот же набор правил, что зацикливает райтер, egg насыщает за 7 итераций.
+#[test]
+fn egraph_saturates_where_naive_loops() {
+    let rules: Vec<Rewrite<SymbolLang, ()>> = vec![rw!("commute-add"; "(+ ?x ?y)" => "(+ ?y ?x)")];
+    let start: RecExpr<SymbolLang> = "(+ a b)".parse().unwrap();
+    let runner = Runner::default().with_expr(&start).run(&rules);
+    assert_eq!(runner.iterations.len(), 2, "должен насытиться за 2 итерации");
 }
