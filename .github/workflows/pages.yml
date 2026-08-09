@@ -40,6 +40,10 @@ jobs:
         working-directory: egg-web
         run: trunk build --release
 
+      - name: Copy static assets
+        working-directory: egg-web
+        run: cp -r static/. dist/
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
